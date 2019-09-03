@@ -1,0 +1,218 @@
+---
+title: "extra_credit"
+author: "Chenyan Huang"
+date: "May 4, 2019"
+output: word_document
+---
+
+First, I'll import some packages and the data.
+
+```{data processing}
+library(FSelector)
+library("RSNNS")
+library(RWeka)
+library(class)
+library(kernlab)
+library(caret)
+library(randomForest)
+df <- read.csv("\\Mac\Home\Desktop\SU\2019spring\IST707\extra_credit\Class_Challenge_data\air_train.csv")
+```
+
+Then I'll delete some unrelated attributes.
+```{delete some unrelated attributes}
+cols.dont.want <- c('amenities','description','latitude','longitude','name')
+df <- df[, ! names(df) %in% cols.dont.want, drop = F]
+```
+
+Then I'll check missing values.
+```{check missing values}
+sapply(df, function(x) sum(is.na(x)))
+```
+
+The missing values are :bathrooms 200; review_scores_rating 16682; bedrooms 91; beds 130
+
+Then I'll delete missing values in bathrooms, bedrooms and beds.
+```{deal with missing values}
+df <- df[-which(is.na(df$bathrooms)),]
+df <- df[-which(is.na(df$beds)),]
+df <- df[-which(is.na(df$bedrooms)),]
+```
+
+Then I'll figure out which columns have valid influence in the objective with chi-square and info gain.
+```{find important columns}
+chi <- chi.squared(Class~., df)
+chiname <- colnames(df[,c(order(chi$attr_importance,decreasing = T))])
+importance <- chi[order(chi,decreasing = T),]
+chi.df <- data.frame(chiname, importance)
+
+infoG <- information.gain(Class ~ ., data=df)
+IGname <- colnames(df[,c(order(infoG$attr_importance,decreasing = T))])
+InfoGain <- infoG[order(infoG,decreasing = T),]
+IG.df <- data.frame(IGname, InfoGain)
+```
+
+Then I'll delete columns that are not that important.
+```{delete some columns}
+cols.dont.want1 <- c('host_identity_verified','instant_bookable','host_has_profile_pic','X')
+df <- df[, ! names(df) %in% cols.dont.want1, drop = F]
+```
+
+Then I use Excel to replace rest NAs with 'Missing'.
+
+Then I'll split values in colunms 'review_scores_rating' and 'number_of_reviews' into a reasonable scales.
+```{split}
+df$review_scores_rating <- cut(df$review_scores_rating, c(20,69,79,89,100),include.lowest = T)
+df$number_of_reviews <- cut(df$number_of_reviews,c(0,10,30,60,605),include.lowest = T)
+train <- df
+```
+
+Then I'll do same thing to test data.
+```{test data}
+test <- read.csv("\\Mac\Home\Desktop\SU\2019spring\IST707\extra_credit\Class_Challenge_data\air_test.csv")
+cols.dont.want2 <- c('amenities','description','latitude','longitude','name','host_identity_verified','instant_bookable','host_has_profile_pic','X')
+test <- test[, ! names(test) %in% cols.dont.want2, drop = F]
+test$review_scores_rating <- cut(test$review_scores_rating, c(20,69,79,89,100),include.lowest = T)
+test$number_of_reviews <- cut(test$number_of_reviews,c(0,10,30,60,605),include.lowest = T)
+```
+
+Now I've finished the data processing. I'll start exploratory data analysis.
+```{Exploratory Data Analysis}
+summary(train$property_type)
+summary(train$room_type)
+summary(train$bed_type)
+summary(train$cancellation_policy)
+summary(train$cleaning_fee)
+summary(train$city)
+summary(train$host_response_rate)
+summary(train$first_review)
+summary(train$last_review)
+summary(train$neighbourhood)
+summary(train$number_of_reviews)
+summary(train$review_scores_rating)
+summary(train$zipcode)
+summary(train$Class)
+
+hist(train$accommodates)
+hist(train$bathrooms)
+hist(train$bedrooms)
+hist(train$beds)
+```
+
+
+
+I'll start building models.
+
+```{decision tree}
+Fact <- train$Class
+train$first_review <- as.numeric(train$first_review)
+
+DT1 <- J48(Class~., data = train, control=Weka_control(U=FALSE, M=2, C=0.4))
+DT_E1 <- evaluate_Weka_classifier(DT1, numFolds = 3, seed = 1, class = TRUE)
+DT_E1
+#The accuracy is 70.0358%
+
+DT2 <- J48(Class~., data = train, control=Weka_control(U=FALSE, M=2, C=0.3))
+DT_E2 <- evaluate_Weka_classifier(DT2, numFolds = 3, seed = 1, class = TRUE)
+DT_E2
+#The accuracy is 70.5851%
+
+DT3 <- J48(Class~., data = train, control=Weka_control(U=FALSE, M=2, C=0.2))
+DT_E3 <- evaluate_Weka_classifier(DT3, numFolds = 3, seed = 1, class = TRUE)
+DT_E3
+#The accuracy is 70.0801%
+
+predDT <- predict(DT2, test, type=c("class"))
+Id=1:201
+str(predDT)
+RFnewpred=cbind(Id, predDT)
+colnames(RFnewpred)=c("Id", "Class")
+write.csv(RFnewpred, file="//mac/Home/Desktop/SU/2019spring/IST707/extra_credit/DT-pred.csv", row.names=FALSE)
+```
+
+```{Naive Bayes}
+NB <- make_Weka_classifier("weka/classifiers/bayes/NaiveBayes")
+NB_M <- NB(Class~., data=train, control=Weka_control(D=TRUE))
+NB_E <- evaluate_Weka_classifier(NB_M, numFolds = 3, seed = 1, class = TRUE)
+NB_E
+#The accuracy is 67.0106%
+predNB <- predict(NB_M, test, type=c("class"))
+Id=1:201
+str(predNB)
+NBnewpred=cbind(Id, predNB)
+colnames(NBnewpred)=c("Id", "Class")
+write.csv(NBnewpred, file="//mac/Home/Desktop/SU/2019spring/IST707/extra_credit/NB-pred.csv", row.names=FALSE)
+```
+
+
+```{SVM}
+memory.limit()
+memory.limit(size=56000)
+smallTrain <- sample(1:nrow(train), size = 30000,replace = FALSE)
+strain <- train[smallTrain,]
+svmtrain <- data.frame(lapply(strain, function(x) as.numeric(x)))
+svmtrain$Class <- as.factor(svmtrain$Class)
+str(svmtrain)
+svmtest <- data.frame(lapply(test, function(x) as.numeric(x)))
+svmtest$Class <- as.factor(svmtest$Class)
+SVM_MM <- ksvm(Class~., data = svmtrain, na.action = na.omit, kernel="laplacedot",C=5,cross=3)
+#The accuracy is 72.83%
+SVMMpred=predict(SVM_MM,svmtest)
+str(SVMMpred)
+Id=1:201
+SVMnewpred=cbind(Id, SVMMpred)
+str(SVMnewpred)
+colnames(SVMnewpred)=c("Id", "Class")
+write.csv(SVMnewpred, file="//mac/Home/Desktop/SU/2019spring/IST707/extra_credit/SVM-pred.csv", row.names=FALSE)
+```
+
+```{random forest}
+rtrain <- strain
+rtrain$first_review <- as.numeric(strain$first_review)
+rtrain$accommodates <- as.numeric(strain$accommodates)
+rtrain$bathrooms <- as.numeric(strain$bathrooms)
+rtrain$bed_type <- as.numeric(strain$bed_type)
+rtrain$cancellation_policy <- as.numeric(strain$cancellation_policy)
+rtrain$city <- as.numeric(strain$city)
+rtrain$host_response_rate <- as.numeric(strain$host_response_rate)
+rtrain$host_since <- as.numeric(strain$host_since)
+rtrain$last_review <- as.numeric(strain$last_review)
+rtrain$neighbourhood <- as.numeric(strain$neighbourhood)
+rtrain$number_of_reviews <- as.numeric(strain$number_of_reviews)
+rtrain$review_scores_rating <- as.numeric(strain$review_scores_rating)
+rtrain$zipcode <- as.numeric(strain$zipcode)
+rtrain$bedrooms <- as.numeric(strain$bedrooms)
+rtrain$beds <- as.numeric(strain$beds)
+rtrain$property_type <- as.numeric(strain$property_type)
+str(rtrain)
+
+rftest <- test
+rftest$first_review <- as.numeric(test$first_review)
+rftest$accommodates <- as.numeric(test$accommodates)
+rftest$bathrooms <- as.numeric(test$bathrooms)
+rftest$bed_type <- as.numeric(test$bed_type)
+rftest$cancellation_policy <- as.numeric(test$cancellation_policy)
+rftest$city <- as.numeric(test$city)
+rftest$host_response_rate <- as.numeric(test$host_response_rate)
+rftest$host_since <- as.numeric(test$host_since)
+rftest$last_review <- as.numeric(test$last_review)
+rftest$neighbourhood <- as.numeric(test$neighbourhood)
+rftest$number_of_reviews <- as.numeric(test$number_of_reviews)
+rftest$review_scores_rating <- as.numeric(test$review_scores_rating)
+rftest$zipcode <- as.numeric(test$zipcode)
+rftest$bedrooms <- as.numeric(test$bedrooms)
+rftest$beds <- as.numeric(test$beds)
+rftest$property_type <- as.numeric(test$property_type)
+rftest$Class <- as.factor(rftest$Class)
+str(rftest)
+library(randomForest)
+RF_M <- randomForest(Class~., data = rtrain, ntree = 500, na.action=na.omit)
+print(RF_M)
+#The accuracy is 70.04%
+rftest <- data.frame(lapply(test, function(x) as.numeric(x)))
+predRF <- predict(RF_M, rftest[,-19], type=c("class"))
+ImageId=1:201
+str(predRF)
+RFnewpred=cbind(Id, predRF)
+colnames(RFnewpred)=c("Id", "Class")
+write.csv(RFnewpred, file="//mac/Home/Desktop/SU/2019spring/IST707/extra_credit/RF-pred.csv", row.names=FALSE)
+```
